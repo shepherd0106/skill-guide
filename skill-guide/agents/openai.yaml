@@ -1,4 +1,4 @@
 interface:
   display_name: "个人技能导航"
-  short_description: "优先选择已有技能并编写执行提示，供你复核确认后再开始任务"
-  default_prompt: "请使用 $skill-guide 为下面的任务推荐必要的本地技能组合或直接处理方案，写出执行 Prompt，等我确认后再执行。"
+  short_description: "核对能力对应、组合必要性与阶段交接，参考适用偏好和已保存流程，复核后执行"
+  default_prompt: "请使用 $skill-guide 为下面的任务推荐合适方案，核对关键能力和必要交接，参考适用偏好与已保存流程，写出执行 Prompt，等我确认后再执行。"
