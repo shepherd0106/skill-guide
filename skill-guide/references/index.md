@@ -6,6 +6,7 @@
 
 ```text
 python <本技能>/scripts/skill_index.py query --workspace <当前工作区> --root <当前有效插件的skills目录> --terms "pdf document 报告" --limit 5
+python <本技能>/scripts/skill_index.py query --workspace <当前工作区> --terms "paper pdf" --tag paper --tag close-reading --limit 5
 python <本技能>/scripts/skill_index.py list --workspace <当前工作区> --root <当前有效插件的skills目录>
 python <本技能>/scripts/skill_index.py check --id <候选ID> --root <当前有效插件的skills目录>
 python <本技能>/scripts/skill_index.py check --path <候选SKILL.md的路径> --root <当前有效插件的skills目录>
@@ -20,13 +21,13 @@ python <本技能>/scripts/skill_index.py refresh --full --workspace <当前工�
 
 未能持久化索引时，保留候选返回的 `content_hashes`，执行前用 `check --path` 返回当前哈希并比较。`content_changed=null` 表示没有缓存基线，不代表没有变化；配置和作用范围同时以当前检查结果核对。
 
-可选 `preferences.json` 与索引独立：
+可选 `preferences.json` 与索引独立，默认从个人数据目录读取，即使 `--cache-dir` 改用工作区位置也不转移。原先将偏好自定义保存在工作区缓存时，显式传 `--preferences-file` 指向原文件。旧别名格式仍可使用：
 
 ```json
 {"aliases":{"候选ID":["中文别名","英文检索词"]}}
 ```
 
-只有用户明确要求才写入偏好。别名辅助检索，不替代技能能力说明。没有偏好文件也能工作。
+只有用户明确要求才写入偏好。别名辅助检索，不替代技能能力说明。新增的作用范围、规则、命令和失败处理见 [偏好管理](preferences.md)。`--tag` 可重复且匹配所有规则标签；`--override-skill` 仅用于当前用户明确选择的实际技能 ID。查询附带适用规则、绑定状态和同级冲突，不赋予能力或授权。没有偏好文件也能工作；损坏文件保留并警告，不能当作明确没有偏好。
 
 ## 结果与可信度
 
