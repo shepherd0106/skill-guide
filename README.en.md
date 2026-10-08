@@ -8,6 +8,10 @@ Installed many Skills but unsure which one to use, whether to combine them, or h
 
 By default, it prioritizes **local Skills + a task-specific prompt + existing tools**. It suggests extending your capabilities only when a critical gap remains or the added capability has clear value.
 
+Each recommendation maps critical task requirements to the responsible capabilities, their evidence, and any conditions still needing verification. Selection habits you explicitly ask it to remember can be saved as scoped local preferences for future matching tasks.
+
+Combination plans also check whether each skill is necessary and whether stages can exchange their outputs. With your explicit request, confirmed or used workflows can be saved and reused to draft a new plan for review when their conditions match.
+
 ## Quick start
 
 ### 1. Install
@@ -53,7 +57,7 @@ Wait for my confirmation.
 
 ### 3. Review, then execute
 
-The navigator returns a **recommended plan, an execution prompt, and any essential points requiring confirmation**. The prompt specifies the goal, input locations, deliverables, actual skill names, and invocation method. A combination also specifies the order, each stage's responsibilities, and handoff outputs.
+The navigator returns a **recommended plan, key requirement mappings, applied preferences, an execution prompt, and any essential points requiring confirmation**. The preference section is omitted when none are relevant. The prompt specifies the goal, input locations, deliverables, actual skill names, and invocation method. A combination also specifies the order, each stage's responsibilities, and handoff outputs.
 
 | Your reply | What happens next |
 | --- | --- |
@@ -76,6 +80,64 @@ After an explicit navigation request, even a recommendation to use no skill is s
 Selection considers task fit, input/output compatibility, current availability, preparation costs, and your stated preferences. Small differences are handled in the task prompt where possible, avoiding combinations of skills with overlapping responsibilities.
 
 Skills and products you explicitly specify are preserved. If they are unsuitable or unavailable, the navigator explains why and proposes alternatives. A skill being unselected is not evidence that it should be deleted.
+
+## Traceable selection evidence
+
+Recommendations map critical requirements to a skill, prompt, or existing tool. Simple tasks get a short explanation; complex tasks may use a table:
+
+| Task requirement | Responsible approach | Evidence | Coverage and verification |
+| --- | --- | --- | --- |
+| Read local PDFs | Candidate skill A | The actual reading section in SKILL.md | Documented support; tool readiness needs checking |
+| Compare methods, evidence, and limitations | A + the task prompt | Reading workflow + the user's comparison dimensions | Prompt adds dimensions; sources checked after execution |
+| Chinese Markdown notes | The task prompt | General output capability and the requested format | No extra skill required |
+
+A is an illustrative placeholder. Actual plans use real skill names and verified references. Documented support, pending conditions, verified behavior, and uncovered requirements are distinguished. Keyword matches, preferences, and a skill's own claims do not establish successful execution.
+
+Similar skills are compared only on differences affecting the current deliverable. When a plan changes, its mappings and execution prompt are updated together. See [Requirement mappings](skill-guide/references/mapping.md).
+
+## Inspect combinations and reuse workflows
+
+| Feature | What it does | When it is used |
+| --- | --- | --- |
+| Combination necessity checks | Remove each skill in turn to see which critical requirements or downstream inputs lose support; reduce overlapping roles | When recommending multiple skills |
+| Stage handoff checks | Compare formats, required fields, and source requirements; optionally check actual files, JSON top-level keys, or CSV headers without modifying them | When stages exchange artifacts or have explicit acceptance criteria |
+| Authorized workflow records | Save conditions, stage roles, and file fingerprints for confirmed or used workflows; check them before reuse | After you explicitly ask to remember a workflow |
+| Clarification based on actual differences | Ask one deciding question only when a verified difference between candidates changes the plan | When missing information affects the primary choice or combination |
+
+For example, a reading skill may extract sources and claims before a task prompt builds a comparison table. The navigator checks whether those required fields are available and explains why the reading skill is needed. If a general prompt can reasonably satisfy the deliverable, the combination is reduced. Removal candidates are considered one at a time, with another check after each removal, so interchangeable alternatives are not all removed together.
+
+A passed handoff check establishes the checked structural conditions; citations and conclusions still need specialist validation. The checks depend on the supplied mappings and contracts, and do not establish semantic correctness or an optimal plan. Simple tasks use short explanations; scripts are used on demand for complex plans, without creating check files for every message. See [Combination and handoffs](skill-guide/references/composition.md).
+
+Example workflow requests:
+
+```text
+Remember the paper comparison workflow we just completed, for this project only:
+PDF input, Markdown output, and preserved source references.
+Show my saved workflows.
+For these new papers, check for a suitable workflow and draft a fresh execution prompt.
+Disable the paper comparison workflow; keep the other records.
+```
+
+Workflows and preferences are stored separately in local workflows.json and preferences.json files. Workflow records contain general summaries and necessary conditions, excluding full prompts, conversations, task materials, and material paths. Current requirements and applicable preferences take precedence. Mismatched types or conditions lead to a different plan; unknown conditions or changed files require checks of affected stages. Same-named skills do not automatically replace a binding. Reuse still requires review of the current prompt, and one successful use is not a guarantee of future results.
+
+Workflow queries check at most five matching records' bound files by default, expanding only when needed. They do not automatically learn, save, or execute new tasks. See [Workflow reuse](skill-guide/references/workflows.md).
+
+## Preferences saved with your authorization
+
+Supported rules include prefer, avoid where possible, explicitly exclude, and output or workflow preferences. They can be scoped to a project or a task category:
+
+```text
+Remember: prefer skill A for close-reading papers.
+Remember: in this project, use Markdown tables for comparison notes by default.
+Show my saved navigation preferences.
+Disable the rule we just saved; keep the other rules.
+```
+
+The actual skill and scope are checked before saving. Ambiguous scope is submitted for review. “Use A this time” affects the current task only; “Prefer A in this conversation” stays in the conversation. A single failure does not automatically become a lasting exclusion. Clear authorization to save a rule is acted on without repeated confirmation, and the result is reported.
+
+Current explicit instructions take precedence over historical preferences; project rules take precedence over applicable personal rules. Substantive conflicts at the same level require review. Preferences can nominate candidates, but candidates must still meet task requirements and actual conditions. Rules bind exact skill paths; updates and migrations are checked rather than automatically transferring rules to same-named skills.
+
+Rules remain in a local preferences.json separate from the index. You can view, revise, disable, or remove specific rules. Only minimal rules and brief reasons are stored, excluding full conversations and task materials; personal data is not published with the repository. Write failures are reported and preserve the original file. See [Preference management](skill-guide/references/preferences.md) for commands and scope matching.
 
 ## Lightweight indexing and directory changes
 
@@ -129,9 +191,18 @@ skill-guide/
 ├── SKILL.md                 # Navigation rules and review workflow
 ├── agents/openai.yaml       # Host display and invocation metadata
 ├── scripts/skill_index.py   # Local indexing and candidate retrieval
+├── scripts/skill_preferences.py # Scoped preference management
+├── scripts/skill_plan.py    # Removal analysis and read-only artifact checks
+├── scripts/skill_workflows.py # Authorized workflow storage and retrieval
 └── references/
     ├── index.md             # Index commands, scope, and fallback handling
+    ├── mapping.md           # Requirement-to-capability mappings
+    ├── preferences.md       # Preference authorization, scope, and changes
+    ├── composition.md       # Necessity, stage contracts, and deciding questions
+    ├── workflows.md         # Workflow records, conditions, and reuse
     └── extension.md         # External capability evaluation and packaging scope
 ```
 
-[`SKILL.md`](skill-guide/SKILL.md) defines the full behavior. The skill instructions and reference documents are currently written in Chinese. Users' index caches and personal preferences remain local and are excluded from the published skill package.
+[`SKILL.md`](skill-guide/SKILL.md) defines the full behavior. The skill instructions and reference documents are currently written in Chinese. Users' index caches, preferences, and workflow records remain local and are excluded from the published skill package.
+
+Development checks: run `python -m unittest discover -s tests -p "test_skill*.py" -q` from the repository root. Tests verify helper behavior; actual task content still needs acceptance checks.
