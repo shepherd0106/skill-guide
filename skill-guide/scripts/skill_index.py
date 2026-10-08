@@ -13,6 +13,8 @@ import time
 import tomllib
 from pathlib import Path
 
+import skill_preferences as preference_store
+
 SCHEMA = 1
 FULL_INTERVAL = 7 * 86400
 
@@ -300,13 +302,16 @@ def atomic_write(path, value):
             pass
 
 
-def query(index, terms, limit, preferences, warnings):
+def query(index, terms, limit, preferences, warnings, preference_context=None):
     tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]*|[\u3400-\u9fff]+", terms.lower()))
     aliases = preferences.get('aliases', {}) if isinstance(preferences, dict) else {}
     if not isinstance(aliases, dict):
         warnings.append('Invalid aliases; ignored')
         aliases = {}
     candidates = []
+    decisions = (preference_context or {}).get('decisions', {})
+    explicit = set((preference_context or {}).get('explicit_choices', []))
+    conflicts = {c['target_id'] for c in (preference_context or {}).get('conflicts', [])}
     for entry in index.get('entries', []):
         if (entry.get('active_scope') is False or entry['availability'] == 'disabled' or
                 entry['name'] == 'skill-guide'):
@@ -316,13 +321,25 @@ def query(index, terms, limit, preferences, warnings):
         text = ' '.join([entry['name'] or Path(entry['path']).parent.name,
                          entry['description'], *extra]).lower()
         matches = sorted(t for t in tokens if t in text)
-        if tokens and not matches:
+        decision = decisions.get(entry['id'], {})
+        if decision.get('kind') == 'exclude':
+            continue
+        if tokens and not matches and decision.get('kind') != 'prefer' and entry['id'] not in explicit:
             continue
         candidates.append({k: entry.get(k) for k in
             ('id', 'name', 'path', 'description', 'availability', 'metadata_status',
              'stale', 'implicit_invocation', 'configured_enabled')} |
-            {'matched_terms': matches, 'content_hashes': entry['files']['hashes']})
-    candidates.sort(key=lambda e: (-len(e['matched_terms']), bool(e['stale']), e['name'] or e['path']))
+            {'matched_terms': matches, 'content_hashes': entry['files']['hashes'],
+             'preference': decision or None, 'preference_conflict': entry['id'] in conflicts,
+             'explicit_selection': entry['id'] in explicit,
+             'retrieval_reason': 'explicit_selection' if entry['id'] in explicit else
+                 'keyword' if matches else 'preference' if decision else 'overview'})
+    # Preferences nominate candidates, never establish task coverage or readiness.
+    candidates.sort(key=lambda e: (
+        not e['explicit_selection'],
+        (e['preference'] or {}).get('kind') == 'avoid',
+        (e['preference'] or {}).get('kind') != 'prefer',
+        -len(e['matched_terms']), bool(e['stale']), e['name'] or e['path']))
     return candidates[:limit], len(candidates)
 
 
@@ -393,13 +410,19 @@ def run(args):
                 warnings.append(f"Cache write failed ({type(exc).__name__}); using memory result")
         result = {'stats': counts, 'cache_persisted': persisted, 'warnings': warnings}
         if args.command in {'query', 'list'}:
-            preferences = read_json(cache / 'preferences.json', warnings, {})
+            preference_path = Path(getattr(args, 'preferences_file', None) or cache / 'preferences.json')
+            preferences = preference_store.load_for_query(preference_path, warnings)
+            preference_context = preference_store.context(
+                preferences, index.get('entries', []), args.workspace,
+                getattr(args, 'tag', []), getattr(args, 'override_skill', []))
             candidates, total = query(index, args.terms if args.command == 'query' else '',
-                                      args.limit, preferences, warnings)
+                                      args.limit, preferences, warnings,
+                                      preference_context if args.command == 'query' else None)
             if args.command == 'list':
                 for entry in candidates:
                     entry['description'] = entry['description'][:160]
-            result.update(candidates=candidates, matching_count=total)
+            result.update(candidates=candidates, matching_count=total,
+                          preferences={**preference_context, 'path': str(preference_path)})
         result['elapsed_ms'] = round((time.perf_counter() - started) * 1000, 2)
         return result
     finally:
@@ -415,6 +438,9 @@ def main():
     parser.add_argument('command', choices=('refresh', 'query', 'list', 'check'))
     parser.add_argument('--codex-home', default=os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
     parser.add_argument('--cache-dir')
+    parser.add_argument('--preferences-file', help='Authoritative preferences file, independent of cache fallback')
+    parser.add_argument('--tag', action='append', default=[], help='Explicit task classification for scoped preferences')
+    parser.add_argument('--override-skill', action='append', default=[], help='Verified skill ID explicitly chosen for this task; overrides historical skill rules')
     parser.add_argument('--config')
     parser.add_argument('--workspace', default=str(Path.cwd()))
     parser.add_argument('--root', action='append', default=[])
@@ -425,6 +451,7 @@ def main():
     parser.add_argument('--full', action='store_true')
     args = parser.parse_args()
     args.cache_dir = args.cache_dir or str(Path(args.codex_home) / 'skills' / '.skill-guide-data')
+    args.preferences_file = args.preferences_file or str(Path(args.codex_home) / 'skills/.skill-guide-data/preferences.json')
     args.config = args.config or str(Path(args.codex_home) / 'config.toml')
     if args.limit < 1:
         parser.error('--limit must be positive')
