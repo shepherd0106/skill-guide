@@ -9,7 +9,11 @@
 3. 确认角色、工具可用性和材料适用性，替换本次材料及参数，说明复用来源与待检查事项，提交本次执行 Prompt。仍需用户确认。
 4. 文件变化只核对受影响阶段；实质影响时更新对应关系和 Prompt。无关目录变化不要求全流程重做。同名技能、插件新目录不自动替代原绑定。
 
-`query` 默认最多返回并核对 5 个匹配流程；必要时才扩大或查看具体记录。历史 `confirmed` 仅表示方案确认过，`used` 表示实际使用过；两者都不证明本次任务一定成功。工具状态、数据质量及未跟踪资源仍需按需核验。
+`query` 先用范围、标签、输入输出及已知条件排除不适用记录，再对一批最多 5 个候选核对绑定文件。已知条件冲突不占名额，也不读取绑定文件；重复的完整绑定指纹在同次查询中只检查一次。当前宿主明确不可用的技能不读取其文件。此限制控制文件核验量；流程 JSON 仍须读取并过滤，不能声称处理任意数量记录都耗时不变。
+
+返回的 `query` 汇报匹配数、条件排除数、实际核验数及 `has_more/next_offset`。存在后续候选时，当前批次没有可用流程不等于没有适用流程：确有必要时用 `--offset <next_offset>` 再查一批；默认最多追加一批，仍未找到则说明检索范围，转入本地普通导航，用户要求后才扩大。翻页沿用同一份条件与技能集合；记录或条件变化时从头查询，不将偏移量当作稳定游标。可用 `--limit` 调整每批数量（1–20）。
+
+历史 `confirmed` 仅表示方案确认过，`used` 表示实际使用过；两者都不证明本次任务一定成功。工具状态、数据质量及未跟踪资源仍需按需核验。
 
 ## 保存与最小数据
 
@@ -27,6 +31,7 @@
 python scripts/skill_workflows.py list
 python scripts/skill_workflows.py bind --path <已选SKILL.md> --resource references/相关说明.md
 python scripts/skill_workflows.py query --context-file <本次查询JSON>
+python scripts/skill_workflows.py query --context-file <同一本次查询JSON> --offset <next_offset>
 python scripts/skill_workflows.py apply --recipe-file <已授权流程JSON> --authorized
 python scripts/skill_workflows.py disable --id <流程ID> --authorized
 python scripts/skill_workflows.py enable --id <流程ID> --authorized
@@ -81,6 +86,8 @@ python scripts/skill_workflows.py remove --id <流程ID> --authorized
 | --- | --- |
 | eligible_for_review | 声明条件与绑定一致，仍检查实际适配并提交 Prompt |
 | needs_review | 条件未知或文件变化，只核验相关阶段 |
-| blocked | 已知条件不匹配、对象缺失或不在当前可用集合；本次另选方案 |
+| blocked | 对象缺失或不在当前可用集合；检查后续候选或另选方案 |
+
+已知条件冲突在文件核验前排除，计入 `query.filtered_conditions`；`rejected_conditions` 仅返回至多一批数量的摘要，不能将其长度当作排除总数。未知条件保留为待核验，不自动视为满足。`semantic_validation=false` 适用于所有返回候选。
 
 查询不改写记录、迁移绑定或执行任务。停用记录不参与检索，删除只影响指定记录。保存、更新和恢复启用不会替用户确认新的任务方案。

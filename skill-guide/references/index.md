@@ -4,6 +4,8 @@
 
 使用宿主可用的 Python 3.11+；脚本只用标准库，不联网。下面的 `python`、脚本位置、工作区和根目录需要替换为当前环境中的真实值，不猜测路径。
 
+Python、索引脚本或某些根目录不可用时，不自动安装依赖或修改权限。改用当前宿主提供的技能名称、描述和真实入口，从少量相关项中直接读取 SKILL.md，继续生成待复核方案。明确说明“仅核对了当前宿主可见的技能”等实际范围；不能声称已完成全目录增量检查，也不能凭索引失败认定没有适用技能。只有影响选择或执行的未知项需要追问。无法读取选中入口时，将其标为待核验并说明缺口。
+
 ```text
 python <本技能>/scripts/skill_index.py query --workspace <当前工作区> --root <当前有效插件的skills目录> --terms "pdf document 报告" --limit 5
 python <本技能>/scripts/skill_index.py query --workspace <当前工作区> --terms "paper pdf" --tag paper --tag close-reading --limit 5
