@@ -114,11 +114,14 @@ class WorkflowTests(unittest.TestCase):
         return W.mutate(self.store, 'apply', True, self.spec)
 
     def query(self, **changes):
+        return self.query_report(**changes)['candidates']
+
+    def query_report(self, **changes):
         args = {'workspace': str(self.root), 'task_tags': ['paper'], 'input_type': 'pdf',
             'output_type': 'markdown', 'constraints': {'citation': 'required'},
             'environment': {'pdf_tool': 'available'}, 'active_skill_ids': [self.target['id']]}
         args.update(changes)
-        return W.candidates(W.load(self.store), **args)
+        return W.query_recipes(W.load(self.store), **args)
 
     def test_read_only_missing_store_and_no_authorization(self):
         self.assertEqual(W.load(self.store)['recipes'], [])
@@ -143,7 +146,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result['status'], 'needs_review')
         self.assertEqual(len(result['unknown_conditions']), 2)
         self.assertEqual(self.query(active_skill_ids=[])[0]['status'], 'blocked')
-        self.assertEqual(self.query(constraints={'citation': 'optional'})[0]['status'], 'blocked')
+        with patch.object(W, 'binding_status', wraps=W.binding_status) as check:
+            rejected = self.query_report(constraints={'citation': 'optional'})
+            self.assertEqual(rejected['candidates'], [])
+            self.assertEqual(rejected['query']['filtered_conditions'], 1)
+            check.assert_not_called()
 
     def test_query_caps_bindings_and_gives_project_priority(self):
         self.apply()
@@ -152,10 +159,101 @@ class WorkflowTests(unittest.TestCase):
             self.spec['scope'] = {'kind': 'project', 'path': str(self.root)}
             self.apply()
         with patch.object(W, 'binding_status', wraps=W.binding_status) as check:
-            found = self.query()
+            report = self.query_report()
+            found = report['candidates']
             self.assertEqual(len(found), 5)
-            self.assertEqual(check.call_count, 5)
+            self.assertEqual(check.call_count, 1)
+        self.assertTrue(report['query']['has_more'])
+        self.assertEqual(report['query']['next_offset'], 5)
         self.assertTrue(all(item['recipe']['scope']['kind'] == 'project' for item in found))
+
+    def test_five_known_mismatches_do_not_hide_sixth_valid_recipe(self):
+        for number in range(5):
+            self.spec['id'] = 'a-mismatch-' + str(number)
+            self.spec['constraints']['citation'] = 'optional'
+            self.apply()
+        self.spec['id'] = 'z-valid'
+        self.spec['constraints']['citation'] = 'required'
+        self.apply()
+        original = self.store.read_bytes()
+        with patch.object(W, 'binding_status', wraps=W.binding_status) as check:
+            report = self.query_report()
+            self.assertEqual([r['recipe']['id'] for r in report['candidates']], ['z-valid'])
+            self.assertEqual(report['query']['filtered_conditions'], 5)
+            self.assertEqual(check.call_count, 1)
+        self.assertFalse(report['query']['has_more'])
+        self.assertEqual(self.store.read_bytes(), original)
+
+    def test_known_environment_conflict_filtered_but_unknown_retained(self):
+        self.apply()
+        with patch.object(W, 'binding_status', wraps=W.binding_status) as check:
+            report = self.query_report(environment={'pdf_tool': 'unavailable'})
+            self.assertEqual(report['candidates'], [])
+            self.assertIn('environment.pdf_tool', report['rejected_conditions'][0]['mismatches'])
+            check.assert_not_called()
+        self.assertEqual(self.query(environment={})[0]['status'], 'needs_review')
+
+    def test_next_batch_can_find_available_recipe_after_blocked_bindings(self):
+        unavailable = copy.deepcopy(self.target)
+        unavailable['id'] = W.P.identity(self.root / 'missing/SKILL.md')
+        unavailable['path'] = str(self.root / 'missing/SKILL.md')
+        data = {'recipes': []}
+        for number in range(6):
+            recipe = copy.deepcopy(self.spec)
+            recipe.update({'id': str(number), 'enabled': True})
+            if number < 5:
+                recipe['stages'][0]['target'] = unavailable
+            data['recipes'].append(recipe)
+        args = dict(workspace=str(self.root), task_tags=['paper'], input_type='pdf',
+                    output_type='markdown', constraints={'citation': 'required'},
+                    environment={'pdf_tool': 'available'}, active_skill_ids=[self.target['id']])
+        with patch.object(W, 'binding_status', wraps=W.binding_status) as check:
+            first = W.query_recipes(data, **args)
+            self.assertTrue(all(r['status'] == 'blocked' for r in first['candidates']))
+            check.assert_not_called()
+            second = W.query_recipes(data, **args, offset=first['query']['next_offset'])
+            self.assertEqual(second['candidates'][0]['recipe']['id'], '5')
+            self.assertEqual(second['candidates'][0]['status'], 'eligible_for_review')
+            self.assertFalse(second['query']['has_more'])
+            self.assertEqual(check.call_count, 1)
+
+    def test_different_saved_fingerprints_of_same_skill_not_cached_together(self):
+        self.apply()
+        data = W.load(self.store)
+        second = copy.deepcopy(data['recipes'][0])
+        second['id'] = 'second'
+        second['stages'][0]['target']['skill_hash'] = '0' * 64
+        data['recipes'].append(second)
+        with patch.object(W, 'load', return_value=data):
+            report = self.query_report()
+        self.assertEqual([r['bindings'][0]['status'] for r in report['candidates']], ['current', 'changed'])
+        self.assertEqual(report['query']['distinct_binding_checks'], 2)
+
+    def test_offset_validation_and_end_of_results(self):
+        self.apply()
+        for offset in (-1, True, 1.5):
+            with self.assertRaises(ValueError):
+                self.query_report(offset=offset)
+        report = self.query_report(offset=20)
+        self.assertEqual(report['candidates'], [])
+        self.assertFalse(report['query']['has_more'])
+        self.assertIsNone(report['query']['next_offset'])
+
+    def test_cli_query_returns_batch_diagnostics_without_changing_store(self):
+        self.apply()
+        original = self.store.read_bytes()
+        context = self.root / 'query.json'
+        context.write_text(json.dumps({'workspace': str(self.root), 'task_tags': ['paper'],
+            'input_type': 'pdf', 'output_type': 'markdown', 'constraints': {'citation': 'required'},
+            'environment': {'pdf_tool': 'available'}, 'active_skill_ids': [self.target['id']]}), encoding='utf-8')
+        result = subprocess.run([sys.executable, str(SCRIPTS / 'skill_workflows.py'), 'query',
+            '--context-file', str(context), '--file', str(self.store), '--offset', '1'],
+            capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report['query']['offset'], 1)
+        self.assertEqual(report['candidates'], [])
+        self.assertEqual(self.store.read_bytes(), original)
 
     def test_project_scope_is_path_containment_not_prefix(self):
         project = self.root / 'project'
