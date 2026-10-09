@@ -120,7 +120,7 @@ Disable the paper comparison workflow; keep the other records.
 
 Workflows and preferences are stored separately in local workflows.json and preferences.json files. Workflow records contain general summaries and necessary conditions, excluding full prompts, conversations, task materials, and material paths. Current requirements and applicable preferences take precedence. Mismatched types or conditions lead to a different plan; unknown conditions or changed files require checks of affected stages. Same-named skills do not automatically replace a binding. Reuse still requires review of the current prompt, and one successful use is not a guarantee of future results.
 
-Workflow queries check at most five matching records' bound files by default, expanding only when needed. They do not automatically learn, save, or execute new tasks. See [Workflow reuse](skill-guide/references/workflows.md).
+New navigation checks reusable workflows before comparing fresh candidates. Queries exclude known condition conflicts before checking a batch of at most five candidates by default; identical bindings are checked once per query. When more candidates remain, the navigator reports the scope and checks another batch if needed, rather than treating an unusable first batch as proof that no suitable workflow exists. Queries do not automatically learn, save, or execute new tasks. See [Workflow reuse](skill-guide/references/workflows.md).
 
 ## Preferences saved with your authorization
 
@@ -144,12 +144,14 @@ Rules remain in a local preferences.json separate from the index. You can view, 
 Each new navigation request checks the current skill directories and maintains a local index mapping skill names to descriptions and entry locations:
 
 1. **Incremental refresh:** Check known directories and entry files for changes, usually rereading only changed entry metadata.
-2. **Read on demand:** Retrieve a small shortlist, then read the full instructions for the primary option and necessary alternatives. Supporting resources are checked as needed.
+2. **Reuse first, read on demand:** Check saved workflows first. If none can reasonably be reused, compare a small shortlist. Read selected skills' full instructions and check supporting resources as needed.
 3. **Verify before execution:** Recheck the selected skills' current content and configuration to avoid executing from outdated instructions.
 
 All entry files are verified when the index is first built, on the first invocation after seven days, or when a full refresh is requested manually. Plugin discovery uses the active versions supplied by the current host, avoiding historical cache versions.
 
 The default cache is `$CODEX_HOME/skills/.skill-guide-data/`, or `~/.codex/skills/.skill-guide-data/` when `CODEX_HOME` is unset. The cache is separate from the skill package and stores skill metadata only, excluding task materials and conversations. A writable workspace cache location can be specified. If the cache is unwritable or its lock is busy, the helper falls back to an in-memory refresh.
+
+If Python or the index is unavailable, selection can continue from a few relevant skills visible to the current host, disclosing the actual scope and pending checks. The navigator does not automatically install dependencies or treat failed retrieval as proof that no suitable skill exists.
 
 Retrieval uses keywords; final selection depends on the skill instructions and current environment. With no matches, the navigator tries other terms or a concise listing. Discovering a file does not establish that the host has enabled it or that its tools and dependencies are ready. Indexing reduces repeated reads; actual time still depends on directory size, the environment, and task complexity.
 
@@ -170,6 +172,8 @@ External searches, downloads, installations, or skill creation require the corre
 ## Invocation and scope
 
 Explicitly specify `$skill-guide` when you want navigation reliably included in the workflow. Description-based matching may trigger it automatically, but cannot guarantee that every professional task starts with navigation.
+
+It suits requests such as “I don't know which skill to choose,” “compare these similar skills,” or “plan a skill combination.” Ordinary explanations and everyday rewrites usually proceed directly. An already selected specialist skill, confirmation, or continuation uses the current task without restarting navigation.
 
 To reduce the chance of forgetting it, you can add a conversation-specific instruction at the start of a chat:
 
@@ -205,4 +209,4 @@ skill-guide/
 
 [`SKILL.md`](skill-guide/SKILL.md) defines the full behavior. The skill instructions and reference documents are currently written in Chinese. Users' index caches, preferences, and workflow records remain local and are excluded from the published skill package.
 
-Development checks: run `python -m unittest discover -s tests -p "test_skill*.py" -q` from the repository root. Tests verify helper behavior; actual task content still needs acceptance checks.
+Development checks: run `python -m unittest discover -s tests -p "test_*.py" -q` from the repository root. Helper tests cover script behavior; use the [navigation acceptance cases](evals/navigation-cases.md) to review selection, fallback, and approval boundaries. Neither script tests nor manual walkthroughs replace real host invocation tests or acceptance of actual task content. The case document is currently in Chinese.
