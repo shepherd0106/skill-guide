@@ -144,14 +144,16 @@ def binding_status(target):
         return 'needs_review'
 
 
-def candidates(data, workspace, task_tags, input_type, output_type, constraints, environment,
-               active_skill_ids=None, limit=5):
-    """Filter recipes by declared conditions; relevance and host availability remain agent checks."""
+def query_recipes(data, workspace, task_tags, input_type, output_type, constraints, environment,
+                  active_skill_ids=None, limit=5, offset=0):
+    """Filter cheap conditions before bounded file checks; expose unexamined candidates."""
     current_tags = set(P.tags(task_tags))
     strings(constraints, 'constraints')
     strings(environment, 'environment')
     need(type(limit) is int and 1 <= limit <= 20, 'Query limit must be 1–20')
-    result = []
+    need(type(offset) is int and offset >= 0, 'Query offset must be a nonnegative integer')
+    pool, rejected = [], []
+    task_matches = 0
     for recipe in sorted(data['recipes'], key=lambda r: (r['scope']['kind'] != 'project', r['id'])):
         if not recipe['enabled'] or not set(P.tags(recipe['task_tags'])).issubset(current_tags):
             continue
@@ -160,6 +162,7 @@ def candidates(data, workspace, task_tags, input_type, output_type, constraints,
             continue
         if recipe['input_type'] != input_type or recipe['output_type'] != output_type:
             continue
+        task_matches += 1
         mismatches, unknown = [], []
         for category, actual in (('constraints', constraints), ('environment', environment)):
             for key, expected in recipe[category].items():
@@ -167,26 +170,47 @@ def candidates(data, workspace, task_tags, input_type, output_type, constraints,
                     unknown.append(category + '.' + key)
                 elif actual[key] != expected:
                     mismatches.append(category + '.' + key)
+        if mismatches:
+            rejected.append({'id': recipe['id'], 'mismatches': mismatches})
+            continue
+        pool.append((recipe, unknown))
+    result, binding_cache = [], {}
+    for recipe, unknown in pool[offset:offset + limit]:
         bindings = []
         for index, stage in enumerate(recipe['stages']):
             target = stage['target']
             if target is None:
                 continue
-            state = binding_status(target)
-            if active_skill_ids is None:
-                unknown.append('host_availability.stage_' + str(index + 1))
-            elif target['id'] not in active_skill_ids:
+            if active_skill_ids is not None and target['id'] not in active_skill_ids:
                 state = 'out_of_scope_or_disabled'
+            else:
+                cache_key = json.dumps(target, sort_keys=True)
+                if cache_key not in binding_cache:
+                    binding_cache[cache_key] = binding_status(target)
+                state = binding_cache[cache_key]
+                if active_skill_ids is None:
+                    unknown.append('host_availability.stage_' + str(index + 1))
             bindings.append({'stage': index + 1, 'id': target['id'], 'status': state})
-        blocked = mismatches or any(b['status'] in {'missing', 'out_of_scope_or_disabled'} for b in bindings)
+        blocked = any(b['status'] in {'missing', 'out_of_scope_or_disabled'} for b in bindings)
         review = unknown or any(b['status'] != 'current' for b in bindings)
         result.append({'recipe': recipe, 'status': 'blocked' if blocked else
                        ('needs_review' if review else 'eligible_for_review'),
-                       'mismatches': mismatches, 'unknown_conditions': unknown, 'bindings': bindings,
+                       'mismatches': [], 'unknown_conditions': unknown, 'bindings': bindings,
                        'semantic_validation': False})
-        if len(result) >= limit:
-            break
-    return sorted(result, key=lambda item: (item['recipe']['scope']['kind'] != 'project', item['recipe']['id']))
+    end = min(offset + limit, len(pool))
+    has_more = end < len(pool)
+    return {'candidates': result, 'query': {'task_matches': task_matches,
+            'filtered_conditions': len(rejected), 'condition_candidates': len(pool),
+            'checked_recipes': len(result), 'distinct_binding_checks': len(binding_cache),
+            'offset': offset, 'has_more': has_more, 'next_offset': end if has_more else None},
+            'rejected_conditions': rejected[:limit]}
+
+
+def candidates(data, workspace, task_tags, input_type, output_type, constraints, environment,
+               active_skill_ids=None, limit=5, offset=0):
+    """Compatibility API for callers needing only the current candidate batch."""
+    return query_recipes(data, workspace, task_tags, input_type, output_type, constraints,
+                         environment, active_skill_ids, limit, offset)['candidates']
 
 
 def mutate(path, command, authorized=False, spec=None, recipe_id=None):
@@ -244,6 +268,7 @@ def main():
     parser.add_argument('--context-file', help='Query context JSON; see references/workflows.md')
     parser.add_argument('--id')
     parser.add_argument('--limit', type=int, default=5, help='Maximum matching workflows checked (1–20)')
+    parser.add_argument('--offset', type=int, default=0, help='Continue from query.next_offset using the same context')
     parser.add_argument('--path', help='Selected SKILL.md for a read-only bind snapshot')
     parser.add_argument('--resource', action='append', default=[], help='Relevant resource path relative to skill directory')
     parser.add_argument('--authorized', action='store_true', help='Caller has user authorization; not a permission bypass')
@@ -263,7 +288,8 @@ def main():
             active = context['active_skill_ids']
             need(active is None or isinstance(active, list) and all(isinstance(x, str) for x in active),
                  'active_skill_ids must be a list or null')
-            result = {'ok': True, 'path': str(path), 'candidates': candidates(load(path), **context, limit=args.limit)}
+            result = {'ok': True, 'path': str(path),
+                      **query_recipes(load(path), **context, limit=args.limit, offset=args.offset)}
         else:
             need(args.command == 'apply' or args.id is not None, 'Workflow ID required')
             need(args.command != 'apply' or args.recipe_file is not None, 'apply requires --recipe-file')
